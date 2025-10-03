@@ -1,74 +1,85 @@
-import torch
-import torch.nn as nn
-import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
+import torch
+import numpy as np
+import random
+import gymnasium as gym
+import ale_py
+
+gym.register_envs(ale_py)
+
 from base_agent import DQNBaseAgent
 from models.atari_model import AtariNetDQN
-import gym
-import random
+
 
 class AtariDQNAgent(DQNBaseAgent):
-	def __init__(self, config):
-		super(AtariDQNAgent, self).__init__(config)
-		### TODO ###
-		# initialize env
-		# self.env = ???
 
-		### TODO ###
-		# initialize test_env
-		# self.test_env = ???
+    def __init__(self, config):
+        super(AtariDQNAgent, self).__init__(config)
+        ### TODO ###
+        self.env = gym.make(config["env_id"], render_mode="rgb_array")
 
-		# initialize behavior network and target network
-		self.behavior_net = AtariNetDQN(self.env.action_space.n)
-		self.behavior_net.to(self.device)
-		self.target_net = AtariNetDQN(self.env.action_space.n)
-		self.target_net.to(self.device)
-		self.target_net.load_state_dict(self.behavior_net.state_dict())
-		# initialize optimizer
-		self.lr = config["learning_rate"]
-		self.optim = torch.optim.Adam(self.behavior_net.parameters(), lr=self.lr, eps=1.5e-4)
-		
-	def decide_agent_actions(self, observation, epsilon=0.0, action_space=None):
-		### TODO ###
-		# get action from behavior net, with epsilon-greedy selection
-		
-		# if random.random() < epsilon:
-		# 	action = ???
-		# else:
-		# 	action = ???
+        ### TODO ###
+        self.test_env = gym.make(config["env_id"], render_mode="human")
 
-		# return action
+        # initialize behavior network and target network
+        self.behavior_net = AtariNetDQN(self.env.action_space.n)
+        self.behavior_net.to(self.device)
+        self.target_net = AtariNetDQN(self.env.action_space.n)
+        self.target_net.to(self.device)
+        self.target_net.load_state_dict(self.behavior_net.state_dict())
+        # initialize optimizer
+        self.lr = config["learning_rate"]
+        self.optim = torch.optim.Adam(self.behavior_net.parameters(),
+                                      lr=self.lr,
+                                      eps=1.5e-4)
 
-		return NotImplementedError
-	
-	def update_behavior_network(self):
-		# sample a minibatch of transitions
-		state, action, reward, next_state, done = self.replay_buffer.sample(self.batch_size, self.device)
+    def decide_agent_actions(self,
+                             observation,
+                             epsilon=0.0,
+                             action_space=None):
+        ### TODO ###
+        # get action from behavior net, with epsilon-greedy selection
 
-		### TODO ###
-		# calculate the loss and update the behavior network
-		# 1. get Q(s,a) from behavior net
-		# 2. get max_a Q(s',a) from target net
-		# 3. calculate Q_target = r + gamma * max_a Q(s',a)
-		# 4. calculate loss between Q(s,a) and Q_target
-		# 5. update behavior net
+        if random.random() < epsilon:
+            action = action_space.sample()
+        else:
+            obs_tensor = torch.tensor(observation[2],
+                                      dtype=torch.float32,
+                                      device=self.device).unsqueeze(0)
+            with torch.no_grad():
+                q_values = self.behavior_net(obs_tensor)
+            action = q_values.argmax(dim=1).item()
 
-		
-		# q_value = ???
-		# with torch.no_grad():
-			# q_next = ???
+        return action
 
-			# if episode terminates at next_state, then q_target = reward
-			# q_target = ???
-        
-		
-		# criterion = ???
-		# loss = criterion(q_value, q_target)
+    def update_behavior_network(self):
+        # sample a minibatch of transitions
+        state, action, reward, next_state, done = self.replay_buffer.sample(
+            self.batch_size, self.device)
 
-		# self.writer.add_scalar('DQN/Loss', loss.item(), self.total_time_step)
+        ### TODO ###
+        # calculate the loss and update the behavior network
+        # 1. get Q(s,a) from behavior net
+        # 2. get max_a Q(s',a) from target net
+        # 3. calculate Q_target = r + gamma * max_a Q(s',a)
+        # 4. calculate loss between Q(s,a) and Q_target
+        # 5. update behavior net
 
-		# self.optim.zero_grad()
-		# loss.backward()
-		# self.optim.step()
-	
-	
+        q_value = self.behavior_net(state)
+        with torch.no_grad():
+            q_next = torch.argmax(self.target_net(state))
+
+        # if episode terminates at next_state, then q_target = reward
+        q_target = reward
+        if not done:
+            q_target += self.gamma * q_next
+
+        criterion = torch.nn.MSELoss()
+        loss = criterion(q_value, q_target)
+
+        self.writer.add_scalar('DQN/Loss', loss.item(), self.total_time_step)
+
+        self.optim.zero_grad()
+        loss.backward()
+        self.optim.step()
