@@ -68,6 +68,18 @@ if __name__ == '__main__':
                         default='ALE/Enduro-v5',
                         help='environment id')
     parser.add_argument('--seed', type=int, help='random seed')
+    parser.add_argument('--nFramePerState',
+                        type=int,
+                        default=4,
+                        help='stack number of frames into state')
+    parser.add_argument('--width',
+                        type=int,
+                        default=84,
+                        help='stack number of frames into state')
+    parser.add_argument('--height',
+                        type=int,
+                        default=84,
+                        help='stack number of frames into state')
     args = parser.parse_args()
 
     config = vars(args)

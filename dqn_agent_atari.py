@@ -20,7 +20,9 @@ class AtariDQNAgent(DQNBaseAgent):
         self.env = gym.make(config["env_id"], render_mode="rgb_array")
 
         ### TODO ###
-        self.test_env = gym.make(config["env_id"], render_mode="human")
+        self.test_env = gym.make(config["env_id"], render_mode="rgb_array")
+        self.test_env = gym.wrappers.RecordVideo(
+            self.test_env, config["logdir"], episode_trigger=lambda x: True)
 
         # initialize behavior network and target network
         self.behavior_net = AtariNetDQN(self.env.action_space.n)
@@ -44,7 +46,7 @@ class AtariDQNAgent(DQNBaseAgent):
         if random.random() < epsilon:
             action = action_space.sample()
         else:
-            obs_tensor = torch.tensor(observation[2],
+            obs_tensor = torch.tensor(observation,
                                       dtype=torch.float32,
                                       device=self.device).unsqueeze(0)
             with torch.no_grad():
@@ -67,13 +69,12 @@ class AtariDQNAgent(DQNBaseAgent):
         # 5. update behavior net
 
         q_value = self.behavior_net(state)
+        q_value = q_value.gather(1, action.unsqueeze(1)).squeeze()
         with torch.no_grad():
-            q_next = torch.argmax(self.target_net(state))
+            q_next = self.target_net(next_state).max(dim=1).values
 
         # if episode terminates at next_state, then q_target = reward
-        q_target = reward
-        if not done:
-            q_target += self.gamma * q_next
+        q_target = reward + (1.0 - done.float()) * self.gamma * q_next
 
         criterion = torch.nn.MSELoss()
         loss = criterion(q_value, q_target)

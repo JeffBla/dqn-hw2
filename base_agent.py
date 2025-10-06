@@ -3,10 +3,11 @@ import torch.nn as nn
 import numpy as np
 import os
 import time
-from collections import deque
 from torch.utils.tensorboard import SummaryWriter
-from replay_buffer.replay_buffer import ReplayMemory
 from abc import ABC, abstractmethod
+
+from frame_stacker import FrameStacker
+from replay_buffer.replay_buffer import ReplayMemory
 
 
 class DQNBaseAgent(ABC):
@@ -28,10 +29,15 @@ class DQNBaseAgent(ABC):
         self.gamma = config["gamma"]
         self.update_freq = config["update_freq"]
         self.update_target_freq = config["update_target_freq"]
-        self.replay_buffer = ReplayMemory(int(
-            config["replay_buffer_capacity"]))
-        self.seed = config["seed"]
+        self.w = config["width"]
+        self.h = config["height"]
+        self.replay_buffer = ReplayMemory(
+            int(config["replay_buffer_capacity"]), config["nFramePerState"],
+            self.w, self.h)
+        self.frame_stacker = FrameStacker(config["nFramePerState"], self.w,
+                                          self.h)
         self.writer = SummaryWriter(config["logdir"])
+        self.seed = config["seed"]
 
         self.writer.add_text('Config', str(config))
 
@@ -70,23 +76,25 @@ class DQNBaseAgent(ABC):
         episode_idx = 0
         while self.total_time_step <= self.training_steps:
             observation, info = self.env.reset()
+            self.frame_stacker.train_mode()
+            state = self.frame_stacker.reset(observation)
             episode_reward = 0
             episode_len = 0
             episode_idx += 1
             while True:
                 if self.total_time_step < self.warmup_steps:
-                    action = self.decide_agent_actions(observation, 1.0,
+                    action = self.decide_agent_actions(state, 1.0,
                                                        self.env.action_space)
                 else:
-                    action = self.decide_agent_actions(observation,
-                                                       self.epsilon,
+                    action = self.decide_agent_actions(state, self.epsilon,
                                                        self.env.action_space)
                     self.epsilon_decay()
 
                 next_observation, reward, terminate, truncate, info = self.env.step(
                     action)
-                self.replay_buffer.append(observation, [action], [reward],
-                                          next_observation, [int(terminate)])
+                self.replay_buffer.append(observation, action, reward,
+                                          terminate)
+                next_state = self.frame_stacker.push(next_observation)
 
                 if self.total_time_step >= self.warmup_steps:
                     self.update()
@@ -105,7 +113,7 @@ class DQNBaseAgent(ABC):
                     )
                     break
 
-                observation = next_observation
+                state = next_state
                 self.total_time_step += 1
 
             if episode_idx % self.eval_interval == 0:
@@ -124,21 +132,24 @@ class DQNBaseAgent(ABC):
         all_rewards = []
         for i in range(self.eval_episode):
             observation, info = self.test_env.reset()
+            self.frame_stacker.eval_mode()
+            state = self.frame_stacker.reset(observation)
             total_reward = 0
             while True:
                 self.test_env.render()
-                action = self.decide_agent_actions(observation,
-                                                   self.eval_epsilon,
+                action = self.decide_agent_actions(state, self.eval_epsilon,
                                                    self.test_env.action_space)
                 next_observation, reward, terminate, truncate, info = self.test_env.step(
                     action)
+                next_state = self.frame_stacker.push(next_observation)
+
                 total_reward += reward
                 if terminate or truncate:
                     print(f"episode {i+1} reward: {total_reward}")
                     all_rewards.append(total_reward)
                     break
 
-                observation = next_observation
+                state = next_state
 
         avg = sum(all_rewards) / self.eval_episode
         print(f"average score: {avg}")
