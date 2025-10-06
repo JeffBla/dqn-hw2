@@ -21,8 +21,8 @@ class AtariDQNAgent(DQNBaseAgent):
 
         ### TODO ###
         self.test_env = gym.make(config["env_id"], render_mode="rgb_array")
-        self.test_env = gym.wrappers.RecordVideo(
-            self.test_env, config["logdir"], episode_trigger=lambda x: True)
+        # self.test_env = gym.wrappers.RecordVideo(
+        #     self.test_env, config["logdir"], episode_trigger=lambda x: True)
 
         # initialize behavior network and target network
         self.behavior_net = AtariNetDQN(self.env.action_space.n)
