@@ -74,6 +74,7 @@ class DQNBaseAgent(ABC):
 
     def train(self):
         episode_idx = 0
+        best_score = 0
         while self.total_time_step <= self.training_steps:
             observation, info = self.env.reset()
             self.frame_stacker.train_mode()
@@ -93,7 +94,7 @@ class DQNBaseAgent(ABC):
                 next_observation, reward, terminate, truncate, info = self.env.step(
                     action)
                 self.replay_buffer.append(observation, action, reward,
-                                          terminate)
+                                          terminate or truncate)
                 next_state = self.frame_stacker.push(next_observation)
 
                 if self.total_time_step >= self.warmup_steps:
@@ -101,6 +102,7 @@ class DQNBaseAgent(ABC):
 
                 episode_reward += reward
                 episode_len += 1
+                self.total_time_step += 1
 
                 if terminate or truncate:
                     self.writer.add_scalar('Train/Episode Reward',
@@ -113,16 +115,18 @@ class DQNBaseAgent(ABC):
                     )
                     break
 
+                observation = next_observation
                 state = next_state
-                self.total_time_step += 1
 
             if episode_idx % self.eval_interval == 0:
-                # save model checkpoint
+                # save best & last model checkpoint
                 avg_score = self.evaluate()
-                self.save(
-                    os.path.join(
-                        self.writer.log_dir,
-                        f"model_{self.total_time_step}_{int(avg_score)}.pth"))
+                self.save(os.path.join(self.writer.log_dir, f"model_last.pth"))
+                if best_score < avg_score:
+                    best_score = avg_score
+                    self.save(
+                        os.path.join(self.writer.log_dir, f"model_best.pth"))
+
                 self.writer.add_scalar('Evaluate/Episode Reward', avg_score,
                                        self.total_time_step)
 
@@ -149,6 +153,7 @@ class DQNBaseAgent(ABC):
                     all_rewards.append(total_reward)
                     break
 
+                observation = next_observation
                 state = next_state
 
         avg = sum(all_rewards) / self.eval_episode
