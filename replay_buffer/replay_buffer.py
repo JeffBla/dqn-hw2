@@ -94,11 +94,11 @@ class ReplayMemory(object):
         sp_u8 = self._stack((idxs + 1) % self.capacity)
         a = self.act[idxs].astype(np.int64)
         r = self.rew[idxs]
-        d = self.done[(idxs + 1) % self.capacity]
+        d = self.done[idxs]
 
         states = torch.from_numpy(s_u8).float().div_(255.0).to(device)
         next_states = torch.from_numpy(sp_u8).float().div_(255.0).to(device)
         actions = torch.from_numpy(a).to(device)
         rewards = torch.from_numpy(r).to(device)
-        dones_next = torch.from_numpy(d.astype(np.bool_)).to(device)
-        return states, actions, rewards, next_states, dones_next
+        dones = torch.from_numpy(d.astype(np.bool_)).to(device)
+        return states, actions, rewards, next_states, dones
