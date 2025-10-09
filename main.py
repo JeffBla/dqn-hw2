@@ -80,6 +80,9 @@ if __name__ == '__main__':
                         type=int,
                         default=84,
                         help='stack number of frames into state')
+    parser.add_argument('--double',
+                        action='store_true',
+                        help='make model double, like ddqn')
     args = parser.parse_args()
 
     config = vars(args)

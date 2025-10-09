@@ -36,6 +36,8 @@ class AtariDQNAgent(DQNBaseAgent):
                                       lr=self.lr,
                                       eps=1.5e-4)
 
+        self.isDouble = config["double"] == True
+
     def decide_agent_actions(self,
                              observation,
                              epsilon=0.0,
@@ -71,7 +73,12 @@ class AtariDQNAgent(DQNBaseAgent):
         q_value = self.behavior_net(state)
         q_value = q_value.gather(1, action.unsqueeze(1)).squeeze()
         with torch.no_grad():
-            q_next = self.target_net(next_state).max(dim=1).values
+            if self.isDouble:
+                next_action = self.behavior_net(next_state).argmax(dim=1)
+                q_next = self.target_net(next_state)
+                q_next = q_next.gather(1, next_action.unsqueeze(1)).squeeze()
+            else:
+                q_next = self.target_net(next_state).max(dim=1).values
 
         # if episode terminates at next_state, then q_target = reward
         q_target = reward + (1.0 - done.float()) * self.gamma * q_next
