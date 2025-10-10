@@ -25,9 +25,13 @@ class AtariDQNAgent(DQNBaseAgent):
         #     self.test_env, config["logdir"], episode_trigger=lambda x: True)
 
         # initialize behavior network and target network
-        self.behavior_net = AtariNetDQN(self.env.action_space.n)
+        self.isDuel = config["duel"] == True
+
+        self.behavior_net = AtariNetDQN(self.env.action_space.n,
+                                        isDuel=self.isDuel)
         self.behavior_net.to(self.device)
-        self.target_net = AtariNetDQN(self.env.action_space.n)
+        self.target_net = AtariNetDQN(self.env.action_space.n,
+                                      isDuel=self.isDuel)
         self.target_net.to(self.device)
         self.target_net.load_state_dict(self.behavior_net.state_dict())
         # initialize optimizer

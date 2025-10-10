@@ -3,20 +3,32 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class AtariNetDQN(nn.Module):
-    def __init__(self, num_classes=4, init_weights=True):
+
+    def __init__(self, num_classes=4, init_weights=True, isDuel=False):
         super(AtariNetDQN, self).__init__()
-        self.cnn = nn.Sequential(nn.Conv2d(4, 32, kernel_size=8, stride=4),
-                                        nn.ReLU(True),
-                                        nn.Conv2d(32, 64, kernel_size=4, stride=2),
-                                        nn.ReLU(True),
-                                        nn.Conv2d(64, 64, kernel_size=3, stride=1),
-                                        nn.ReLU(True)
-                                        )
-        self.classifier = nn.Sequential(nn.Linear(7*7*64, 512),
-                                        nn.ReLU(True),
-                                        nn.Linear(512, num_classes)
-                                        )
+        self.isDuel = isDuel
+
+        self.cnn = nn.Sequential(
+            nn.Conv2d(4, 32, kernel_size=8, stride=4),  # 20
+            nn.ReLU(True),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # 9
+            nn.ReLU(True),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # 7
+            nn.ReLU(True))
+
+        if isDuel:
+            self.fc = nn.Linear(7 * 7 * 64, 512)
+            self.adv = nn.Sequential(nn.Linear(512, 256), nn.ReLU(True),
+                                     nn.Linear(256, num_classes))
+            self.val = nn.Sequential(nn.Linear(512, 256), nn.ReLU(True),
+                                     nn.Linear(256, 1))
+
+        else:
+            self.classifier = nn.Sequential(nn.Linear(7 * 7 * 64, 512),
+                                            nn.ReLU(True),
+                                            nn.Linear(512, num_classes))
 
         if init_weights:
             self._initialize_weights()
@@ -25,7 +37,16 @@ class AtariNetDQN(nn.Module):
         x = x.float()
         x = self.cnn(x)
         x = torch.flatten(x, start_dim=1)
-        x = self.classifier(x)
+        if self.isDuel:
+            x = F.relu(self.fc(x), True)
+
+            adv = self.adv(x)
+            adv -= adv.mean(dim=1, keepdim=True)
+
+            val = self.val(x)
+            x = val + adv
+        else:
+            x = self.classifier(x)
         return x
 
     def _initialize_weights(self):

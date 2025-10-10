@@ -83,6 +83,9 @@ if __name__ == '__main__':
     parser.add_argument('--double',
                         action='store_true',
                         help='make model double, like ddqn')
+    parser.add_argument('--duel',
+                        action='store_true',
+                        help='make model duel, like duel dqn')
     args = parser.parse_args()
 
     config = vars(args)
