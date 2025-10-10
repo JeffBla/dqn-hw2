@@ -22,7 +22,7 @@ class AtariNetDQN(nn.Module):
             self._initialize_weights()
 
     def forward(self, x):
-        x = x.float() / 255.
+        x = x.float()
         x = self.cnn(x)
         x = torch.flatten(x, start_dim=1)
         x = self.classifier(x)
