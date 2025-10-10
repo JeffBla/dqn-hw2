@@ -16,11 +16,22 @@ class AtariDQNAgent(DQNBaseAgent):
 
     def __init__(self, config):
         super(AtariDQNAgent, self).__init__(config)
-        ### TODO ###
-        self.env = gym.make(config["env_id"], render_mode="rgb_array")
+        # Training env: avoid rendering to cut CPU overhead; use grayscale + frameskip.
+        # ALE v5 supports obs_type and frameskip.
+        self.env = gym.make(
+            config["env_id"],
+            render_mode=None,
+            obs_type="grayscale",
+            frameskip=4,
+        )
 
-        ### TODO ###
-        self.test_env = gym.make(config["env_id"], render_mode="rgb_array")
+        # Eval env: default to no rendering for speed; user can re-enable if needed.
+        self.test_env = gym.make(
+            config["env_id"],
+            render_mode=None,
+            obs_type="grayscale",
+            frameskip=4,
+        )
         # self.test_env = gym.wrappers.RecordVideo(
         #     self.test_env, config["logdir"], episode_trigger=lambda x: True)
 
@@ -34,6 +45,8 @@ class AtariDQNAgent(DQNBaseAgent):
                                       isDuel=self.isDuel)
         self.target_net.to(self.device)
         self.target_net.load_state_dict(self.behavior_net.state_dict())
+        # Enable cuDNN autotuner for conv layers (speeds up on fixed input shapes)
+        torch.backends.cudnn.benchmark = True
         # initialize optimizer
         self.lr = config["learning_rate"]
         self.optim = torch.optim.Adam(self.behavior_net.parameters(),
