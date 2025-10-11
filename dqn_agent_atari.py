@@ -62,8 +62,13 @@ class AtariDQNAgent(DQNBaseAgent):
 
         self.behavior_net = AtariNetDQN(n_actions, isDuel=self.isDuel)
         self.behavior_net.to(self.device)
-        self.target_net = AtariNetDQN(self.env.action_space.n,
-                                      isDuel=self.isDuel)
+
+        self.ckpt = config["ckpt"]
+        if self.ckpt != None:
+            self.behavior_net.load_state_dict(
+                torch.load(self.ckpt, map_location=self.device))
+
+        self.target_net = AtariNetDQN(n_actions, isDuel=self.isDuel)
         self.target_net.to(self.device)
         self.target_net.load_state_dict(self.behavior_net.state_dict())
         # Enable cuDNN autotuner for conv layers (speeds up on fixed input shapes)

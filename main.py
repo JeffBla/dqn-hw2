@@ -47,6 +47,7 @@ if __name__ == '__main__':
                         type=str,
                         default='log/DQN/Enduro/',
                         help='directory to save logs and models')
+    parser.add_argument('--ckpt', type=str, help='directory to load model')
     parser.add_argument('--update_freq',
                         type=int,
                         default=4,
