@@ -227,7 +227,7 @@ class DQNBaseAgent(ABC):
         print("Evaluating...")
         all_rewards = []
         for i in range(self.eval_episode):
-            observation, info = self.test_env.reset()
+            observation, info = self.test_env.reset(seed=self.seed)
             self.frame_stacker.eval_mode()
             state = self.frame_stacker.reset(observation)
             total_reward = 0
