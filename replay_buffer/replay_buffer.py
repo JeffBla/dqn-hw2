@@ -5,18 +5,28 @@ import random
 
 
 class ReplayMemory(object):
+    """Experience replay with optional stride-aware stacking for vector envs.
 
-    def __init__(self, capacity, nFrame, w, h):
+    When `num_envs > 1`, stacked frames for a state are gathered with a stride
+    of `num_envs` so that all frames in a stack come from the same environment
+    timeline: indices [e - (k-1)*num_envs, ..., e - num_envs, e]. The
+    corresponding next-state stack ends at `e + num_envs`.
+    """
+
+    def __init__(self, capacity, nFrame, w, h, num_envs: int = 1):
         self.h = h
         self.w = w
         self.capacity = capacity
         self.nFrame = nFrame
+        self.num_envs = int(num_envs) if num_envs is not None else 1
         self.ptr = 0
         self.size = 0
         self.obs = np.empty((self.capacity, h, w), dtype=np.uint8)
         self.act = np.empty((self.capacity, ), dtype=np.uint8)
         self.rew = np.empty((self.capacity, ), dtype=np.float32)
         self.done = np.empty((self.capacity, ), dtype=np.bool_)
+        # Track environment id per transition for vectorized rollouts
+        self.env_id = np.empty((self.capacity, ), dtype=np.int16)
 
     def __len__(self):
         return self.size
@@ -33,49 +43,78 @@ class ReplayMemory(object):
         return g
 
     def append(self, *transition):
-        """Saves a transition"""
-        obs, action, reward, done = transition
+        """Saves a transition. Accepts (obs, action, reward, done[, env_id])"""
+        if len(transition) == 4:
+            obs, action, reward, done = transition
+            env_id = 0
+        elif len(transition) == 5:
+            obs, action, reward, done, env_id = transition
+        else:
+            raise ValueError(
+                "append expects 4 or 5 elements: obs, action, reward, done[, env_id]"
+            )
 
         i = self.ptr
         self.obs[i] = self._to_gray_u8(obs)
         self.act[i] = np.uint8(action)
         self.rew[i] = np.float32(reward)
         self.done[i] = bool(done)
+        self.env_id[i] = np.int16(env_id)
         self.ptr = (i + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
     def _valid_end(self, e):
-        if self.size < self.nFrame + 1: return False
-        # 避免窗口跨越寫入斷點與 episode 邊界
-        next_is_break = (self.size == self.capacity) and (
-            (e + 1) % self.capacity == self.ptr)
-        if next_is_break: return False
-        for t in range(self.nFrame - 1):
-            i = (e - t) % self.capacity
-            if (self.size == self.capacity) and (i == self.ptr): return False
-            if self.done[(i - 1) % self.capacity]: return False
+        stride = self.num_envs if self.num_envs > 1 else 1
+        # Need enough elements to form state (nFrame) and a next end (e+stride)
+        if self.size < (self.nFrame * stride) + 1:
+            return False
+
+        cap = self.capacity
+        # window indices: [e-(k-1), ..., e-1, e]
+        widx = (e - (np.arange(self.nFrame)[::-1] * stride)) % cap
+
+        # 1) Same env across the window
+        ids = self.env_id[widx]
+        if not np.all(ids == ids[-1]):
+            return False
+
+        # 2) No done within the window except the last transition
+        if self.done[widx[:-1]].any():
+            return False
+
+        # 3) Do not cross write pointer when full (for state and next-state)
+        if self.size == self.capacity:
+            if self.ptr in widx:
+                return False
+            widx_next = (widx + stride) % cap
+            if self.ptr in widx_next:
+                return False
+            if ((e + stride) % cap) == self.ptr:
+                return False
+
         return True
 
     def _stack(self, end_indices):
         B = len(end_indices)
         out = np.empty((B, self.nFrame, self.h, self.w), dtype=np.uint8)
+        stride = self.num_envs if self.num_envs > 1 else 1
         for b, e in enumerate(end_indices):
             for t in range(self.nFrame):
-                out[b,
-                    t] = self.obs[(e - (self.nFrame - 1 - t)) % self.capacity]
+                idx = (e - ((self.nFrame - 1 - t) * stride)) % self.capacity
+                out[b, t] = self.obs[idx]
         return out
 
     def sample(self, batch_size, device):
         """Sample a batch of transitions"""
         idxs = []
-        tries, max_tries = 0, batch_size * 200
+        tries, max_tries = 0, batch_size * 1000
+        stride = self.num_envs if self.num_envs > 1 else 1
         if self.size < self.capacity:
-            low, high = self.nFrame - 1, self.size - 2
+            # Ensure we can build [state, next_state] without wrap
+            low, high = (self.nFrame - 1) * stride, self.size - stride - 1
             while len(idxs) < batch_size and tries < max_tries:
-                e = random.randint(low, high)
-                # prevent cross other episode
-                s, ed = e - (self.nFrame - 1), e
-                if not self.done[s:ed].any():
+                e = random.randint(low, max(high, low))
+                if self._valid_end(e):
                     idxs.append(e)
                 tries += 1
         else:
@@ -91,31 +130,21 @@ class ReplayMemory(object):
 
         idxs = np.asarray(idxs, dtype=np.int64)
         s_u8 = self._stack(idxs)
-        sp_u8 = self._stack((idxs + 1) % self.capacity)
+        sp_u8 = self._stack((idxs + stride) % self.capacity)
         a = self.act[idxs].astype(np.int64)
         r = self.rew[idxs]
         d = self.done[idxs]
 
         # Use pinned memory + non_blocking transfers to speed up H2D copies.
-        states = (
-            torch.from_numpy(s_u8)
-            .pin_memory()
-            .float()
-            .div_(255.0)
-            .to(device, non_blocking=True)
-        )
+        states = (torch.from_numpy(s_u8).pin_memory().float().div_(255.0).to(
+            device, non_blocking=True))
         next_states = (
-            torch.from_numpy(sp_u8)
-            .pin_memory()
-            .float()
-            .div_(255.0)
-            .to(device, non_blocking=True)
-        )
-        actions = torch.from_numpy(a).pin_memory().to(device, non_blocking=True)
-        rewards = torch.from_numpy(r).pin_memory().to(device, non_blocking=True)
-        dones = (
-            torch.from_numpy(d.astype(np.bool_))
-            .pin_memory()
-            .to(device, non_blocking=True)
-        )
+            torch.from_numpy(sp_u8).pin_memory().float().div_(255.0).to(
+                device, non_blocking=True))
+        actions = torch.from_numpy(a).pin_memory().to(device,
+                                                      non_blocking=True)
+        rewards = torch.from_numpy(r).pin_memory().to(device,
+                                                      non_blocking=True)
+        dones = (torch.from_numpy(d.astype(np.bool_)).pin_memory().to(
+            device, non_blocking=True))
         return states, actions, rewards, next_states, dones

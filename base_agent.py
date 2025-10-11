@@ -6,7 +6,7 @@ import time
 from torch.utils.tensorboard import SummaryWriter
 from abc import ABC, abstractmethod
 
-from frame_stacker import FrameStacker
+from frame_stacker import FrameStacker, MultiFrameStacker
 from replay_buffer.replay_buffer import ReplayMemory
 
 
@@ -17,6 +17,7 @@ class DQNBaseAgent(ABC):
         self.device = torch.device(
             "cuda" if self.gpu and torch.cuda.is_available() else "cpu")
         self.total_time_step = 0
+        self.num_envs = int(config["num_envs"])
         self.training_steps = int(config["training_steps"])
         self.batch_size = int(config["batch_size"])
         self.epsilon = 1.0
@@ -31,11 +32,20 @@ class DQNBaseAgent(ABC):
         self.update_target_freq = config["update_target_freq"]
         self.w = config["width"]
         self.h = config["height"]
-        self.replay_buffer = ReplayMemory(
-            int(config["replay_buffer_capacity"]), config["nFramePerState"],
-            self.w, self.h)
+        self.replay_buffer = ReplayMemory(int(
+            config["replay_buffer_capacity"]),
+                                          config["nFramePerState"],
+                                          self.w,
+                                          self.h,
+                                          num_envs=self.num_envs)
+        # Single-env stacker by default; vector path will override with MultiFrameStacker
         self.frame_stacker = FrameStacker(config["nFramePerState"], self.w,
                                           self.h)
+        if self.num_envs > 1:
+            self.vec_frame_stacker = MultiFrameStacker(
+                self.num_envs, config["nFramePerState"], self.w, self.h)
+        else:
+            self.vec_frame_stacker = None
         self.writer = SummaryWriter(config["logdir"])
         self.seed = config["seed"]
 
@@ -73,8 +83,90 @@ class DQNBaseAgent(ABC):
         self.epsilon = max(self.epsilon, self.eps_min)
 
     def train(self):
-        episode_idx = 0
         best_score = 0
+
+        # Vectorized path
+        if self.num_envs > 1:
+            assert self.vec_frame_stacker is not None
+            obs_batch, info = self.env.reset()
+            self.vec_frame_stacker.train_mode()
+            state_batch = self.vec_frame_stacker.reset(obs_batch)
+            ep_rewards = np.zeros(self.num_envs, dtype=np.float32)
+            ep_lens = np.zeros(self.num_envs, dtype=np.int64)
+            episode_count = 0
+
+            while self.total_time_step <= self.training_steps:
+                # Per-env action selection (keeps agent API unchanged)
+                actions = np.empty(self.num_envs, dtype=np.int64)
+                # For vector env, use single_action_space if present
+                action_space = getattr(self.env, 'single_action_space',
+                                       self.env.action_space)
+                for i in range(self.num_envs):
+                    actions[i] = int(
+                        self.decide_agent_actions(state_batch[i], self.epsilon,
+                                                  action_space))
+
+                if self.total_time_step >= self.warmup_steps:
+                    self.epsilon_decay()
+
+                next_obs_batch, rewards, terminates, truncates, infos = self.env.step(
+                    actions)
+                dones = np.logical_or(terminates, truncates)
+
+                # Append transitions with env_id
+                for i in range(self.num_envs):
+                    self.replay_buffer.append(obs_batch[i], int(actions[i]),
+                                              float(rewards[i]),
+                                              bool(dones[i]), i)
+
+                # autoreset=True => next_obs_batch already contains reset obs
+                reset_mask = dones.astype(bool)
+                next_state_batch = self.vec_frame_stacker.push(
+                    next_obs_batch, reset_mask)
+
+                # Updates
+                if self.total_time_step >= self.warmup_steps:
+                    self.update()
+
+                # Logging
+                ep_rewards += rewards
+                ep_lens += 1
+                finished = np.where(dones)[0]
+                for idx in finished:
+                    episode_count += 1
+                    self.writer.add_scalar('Train/Episode Reward',
+                                           float(ep_rewards[idx]),
+                                           self.total_time_step)
+                    self.writer.add_scalar('Train/Episode Len',
+                                           int(ep_lens[idx]),
+                                           self.total_time_step)
+                    print(
+                        f"[{self.total_time_step}/{self.training_steps}] env:{idx} ep:{episode_count} reward:{ep_rewards[idx]} len:{ep_lens[idx]} eps:{self.epsilon}"
+                    )
+                    ep_rewards[idx] = 0.0
+                    ep_lens[idx] = 0
+
+                obs_batch = next_obs_batch
+                state_batch = next_state_batch
+                self.total_time_step += self.num_envs
+
+                # Periodic evaluation by episode count
+                if episode_count > 0 and episode_count % self.eval_interval == 0:
+                    avg_score = self.evaluate()
+                    self.save(
+                        os.path.join(self.writer.log_dir, f"model_last.pth"))
+                    if best_score < avg_score:
+                        best_score = avg_score
+                        self.save(
+                            os.path.join(self.writer.log_dir,
+                                         f"model_best.pth"))
+                    self.writer.add_scalar('Evaluate/Episode Reward',
+                                           avg_score, self.total_time_step)
+
+            return
+
+        # Single-env path (unchanged)
+        episode_idx = 0
         while self.total_time_step <= self.training_steps:
             observation, info = self.env.reset()
             self.frame_stacker.train_mode()

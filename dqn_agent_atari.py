@@ -16,14 +16,30 @@ class AtariDQNAgent(DQNBaseAgent):
 
     def __init__(self, config):
         super(AtariDQNAgent, self).__init__(config)
-        # Training env: avoid rendering to cut CPU overhead; use grayscale + frameskip.
-        # ALE v5 supports obs_type and frameskip.
-        self.env = gym.make(
-            config["env_id"],
-            render_mode=None,
-            obs_type="grayscale",
-            frameskip=4,
-        )
+        # Training env(s): use single env or AsyncVectorEnv based on num_envs
+        self.num_envs = int(config["num_envs"])
+        if self.num_envs > 1:
+
+            def make_single():
+                return gym.make(
+                    config["env_id"],
+                    render_mode=None,
+                    obs_type="grayscale",
+                    frameskip=4,
+                )
+
+            self.env = gym.vector.AsyncVectorEnv(
+                [make_single for _ in range(self.num_envs)],
+                shared_memory=False,
+            )
+        else:
+            # Single training env
+            self.env = gym.make(
+                config["env_id"],
+                render_mode=None,
+                obs_type="grayscale",
+                frameskip=4,
+            )
 
         # Eval env: default to no rendering for speed; user can re-enable if needed.
         self.test_env = gym.make(
@@ -38,8 +54,13 @@ class AtariDQNAgent(DQNBaseAgent):
         # initialize behavior network and target network
         self.isDuel = config["duel"] == True
 
-        self.behavior_net = AtariNetDQN(self.env.action_space.n,
-                                        isDuel=self.isDuel)
+        # Determine number of actions (vector vs single)
+        if hasattr(self.env, 'single_action_space'):
+            n_actions = self.env.single_action_space.n
+        else:
+            n_actions = self.env.action_space.n
+
+        self.behavior_net = AtariNetDQN(n_actions, isDuel=self.isDuel)
         self.behavior_net.to(self.device)
         self.target_net = AtariNetDQN(self.env.action_space.n,
                                       isDuel=self.isDuel)

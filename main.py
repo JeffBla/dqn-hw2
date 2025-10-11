@@ -18,6 +18,10 @@ if __name__ == '__main__':
                         type=int,
                         default=32,
                         help='batch size')
+    parser.add_argument('--num_envs',
+                        type=int,
+                        default=1,
+                        help='number of envs parallel exec')
     parser.add_argument('--eps_min',
                         type=float,
                         default=0.1,
