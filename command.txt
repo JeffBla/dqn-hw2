@@ -1,0 +1,3 @@
+python main.py --ckpt log/duelDQN-batch128/MsPacman/model_best.pth \
+ --num_envs 1 --training_steps 0 --eval_interval 1 --eval_episode \
+5 --env_id ALE/MsPacman-v5 --duel --eval_video --seed 101 --logdir log/duelDQN-batch128/MsPacman/video

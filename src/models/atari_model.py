@@ -24,6 +24,7 @@ class AtariNetDQN(nn.Module):
                                      nn.Linear(256, num_classes))
             self.val = nn.Sequential(nn.Linear(512, 256), nn.ReLU(True),
                                      nn.Linear(256, 1))
+
         else:
             self.classifier = nn.Sequential(nn.Linear(7 * 7 * 64, 512),
                                             nn.ReLU(True),
